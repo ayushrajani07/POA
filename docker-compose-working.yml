@@ -1,0 +1,111 @@
+version: '3.8'
+
+services:
+  influxdb:
+    image: influxdb:2.7-alpine
+    container_name: op-influxdb
+    restart: unless-stopped
+    ports:
+      - "8086:8086"
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: ayush
+      DOCKER_INFLUXDB_INIT_PASSWORD: marketdata
+      DOCKER_INFLUXDB_INIT_ORG: your-org
+      DOCKER_INFLUXDB_INIT_BUCKET: your-bucket
+      DOCKER_INFLUXDB_INIT_RETENTION: 0s
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: VFEhioeCi2vFCtv-dH_7Fe6gEgNtO-Tu7qcQW4WvIbAFQIdKGa_hDu4dxatOgwskZcva4CHkeOPbjkQwAvPyVg==
+    volumes:
+      - influxdb-data:/var/lib/influxdb2
+    networks:
+      - op-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8086/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+
+  redis:
+    image: redis:7-alpine
+    container_name: op-redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    command: redis-server --save 60 1000 --loglevel warning --maxmemory 512mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-data:/data
+    networks:
+      - op-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: op-prometheus
+    restart: unless-stopped
+    ports:
+      - "9090:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--storage.tsdb.retention.time=90d'
+      - '--web.enable-lifecycle'
+      - '--log.level=info'
+    volumes:
+      - prometheus-data:/prometheus
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    networks:
+      - op-network
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  grafana:
+    image: grafana/grafana:10.2.2
+    container_name: op-grafana
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: marketdata
+      GF_SECURITY_SECRET_KEY: SW2YcwTIb9zpOOhoPsMm
+      GF_SERVER_ROOT_URL: http://localhost:3000/
+      GF_DATABASE_TYPE: sqlite3
+      GF_DATABASE_PATH: /var/lib/grafana/grafana.db
+      GF_AUTH_ANONYMOUS_ENABLED: false
+      GF_USERS_ALLOW_SIGN_UP: false
+      GF_LOG_MODE: console
+      GF_LOG_LEVEL: info
+    volumes:
+      - grafana-data:/var/lib/grafana
+    networks:
+      - op-network
+    depends_on:
+      - influxdb
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+
+volumes:
+  influxdb-data:
+    driver: local
+  redis-data:
+    driver: local
+  prometheus-data:
+    driver: local
+  grafana-data:
+    driver: local
+
+networks:
+  op-network:
+    driver: bridge
