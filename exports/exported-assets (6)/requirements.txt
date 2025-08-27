@@ -1,0 +1,337 @@
+# OP TRADING PLATFORM - PYTHON REQUIREMENTS
+# =============================================
+# Version: 3.0.0 - Complete Dependency List
+# Generated: 2025-08-25 2:28 PM IST
+# 
+# This file contains ALL Python dependencies for the OP Trading Platform.
+# Organized by category with version pinning for stability and reproducibility.
+# 
+# INSTALLATION:
+#   pip install -r requirements.txt
+# 
+# UPDATE:
+#   pip install --upgrade -r requirements.txt
+
+# ================================================================================================
+# CORE WEB FRAMEWORK AND SERVER
+# ================================================================================================
+
+# FastAPI and async web framework
+fastapi==0.104.1                    # Modern, high-performance web framework
+uvicorn[standard]==0.24.0           # ASGI server with performance optimizations
+starlette==0.27.0                   # Lightweight ASGI framework (FastAPI dependency)
+
+# HTTP client libraries
+httpx==0.25.2                       # Async HTTP client for Python
+aiohttp==3.9.0                      # Async HTTP client/server framework
+requests==2.31.0                    # HTTP library for Python (synchronous)
+
+# WebSocket support
+websockets==12.0                    # WebSockets implementation
+
+# ================================================================================================
+# ASYNC AND CONCURRENCY
+# ================================================================================================
+
+# Async I/O and file operations
+asyncio==3.4.3                      # Asynchronous I/O support (built-in enhancement)
+aiofiles==23.2.1                    # Async file operations
+aioredis==2.0.1                     # Async Redis client
+
+# ================================================================================================
+# DATA PROCESSING AND ANALYTICS
+# ================================================================================================
+
+# Core data science stack
+pandas==2.1.3                       # Data manipulation and analysis
+numpy==1.24.3                       # Numerical computing foundation
+scipy==1.11.4                       # Scientific computing library
+
+# Machine learning and statistics
+scikit-learn==1.3.2                 # Machine learning algorithms
+statsmodels==0.14.0                 # Statistical modeling
+
+# ================================================================================================
+# FINANCIAL AND OPTIONS ANALYTICS
+# ================================================================================================
+
+# Financial mathematics libraries
+QuantLib-Python==1.32               # Quantitative finance library
+py_vollib==1.0.1                    # Options volatility calculations
+black-scholes==0.0.5                # Black-Scholes option pricing
+
+# Market data and technical analysis
+ta-lib==0.4.28                      # Technical Analysis library
+yfinance==0.2.25                    # Yahoo Finance API (backup data source)
+
+# ================================================================================================
+# DATABASE AND STORAGE
+# ================================================================================================
+
+# Time-series database (InfluxDB)
+influxdb-client==1.38.0             # InfluxDB v2 client with async support
+
+# Caching and coordination (Redis)
+redis==5.0.1                        # Redis client (synchronous)
+
+# SQL database support (optional)
+sqlalchemy==2.0.23                  # SQL toolkit and ORM
+alembic==1.12.1                     # Database migration tool
+psycopg2-binary==2.9.9              # PostgreSQL adapter (if needed)
+
+# ================================================================================================
+# AUTHENTICATION AND SECURITY
+# ================================================================================================
+
+# JWT and authentication
+python-jose[cryptography]==3.3.0    # JWT handling with crypto support
+python-multipart==0.0.6             # Multipart form parsing
+passlib[bcrypt]==1.7.4              # Password hashing library
+cryptography==41.0.7                # Cryptographic primitives
+
+# OAuth and API security
+authlib==1.2.1                      # OAuth and OpenID Connect
+itsdangerous==2.1.2                 # Secure token generation
+
+# ================================================================================================
+# MONITORING AND OBSERVABILITY
+# ================================================================================================
+
+# Metrics and monitoring
+prometheus-client==0.19.0           # Prometheus metrics client
+psutil==5.9.6                       # System and process utilities
+sentry-sdk[fastapi]==1.38.0         # Error tracking and monitoring
+
+# Structured logging
+structlog==23.2.0                   # Structured logging
+colorama==0.4.6                     # Colored terminal output
+
+# ================================================================================================
+# CONFIGURATION AND ENVIRONMENT
+# ================================================================================================
+
+# Environment and configuration management
+python-dotenv==1.0.0                # Load environment variables from .env files
+pydantic==2.5.0                     # Data validation using Python type annotations
+pydantic-settings==2.1.0            # Settings management with Pydantic
+click==8.1.7                        # Command line interface creation
+typer==0.9.0                        # Modern CLI framework built on Click
+
+# ================================================================================================
+# TRADING PLATFORM INTEGRATION
+# ================================================================================================
+
+# Kite Connect API
+kiteconnect==4.2.0                  # Zerodha Kite Connect API client
+flask==3.0.0                        # Web framework for OAuth callbacks
+
+# Additional trading APIs (optional)
+alpha-vantage==2.3.1                # Alpha Vantage API client
+polygon-api-client==1.12.0          # Polygon.io API client
+
+# ================================================================================================
+# DEVELOPMENT AND TESTING
+# ================================================================================================
+
+# Testing framework
+pytest==7.4.3                       # Testing framework
+pytest-asyncio==0.21.1              # Async testing support
+pytest-cov==4.1.0                   # Coverage reporting
+pytest-xdist==3.3.1                 # Parallel test execution
+hypothesis==6.88.4                  # Property-based testing
+faker==20.1.0                       # Generate fake data for testing
+
+# Mocking and fixtures
+pytest-mock==3.12.0                 # Mocking framework
+responses==0.24.1                   # Mock HTTP responses
+factory-boy==3.3.0                  # Test fixtures
+
+# Performance testing
+locust==2.17.0                      # Load testing framework
+
+# ================================================================================================
+# CODE QUALITY AND FORMATTING
+# ================================================================================================
+
+# Code formatting and linting
+black==23.11.0                      # Python code formatter
+isort==5.12.0                       # Import sorting utility
+flake8==6.1.0                       # Code linting
+flake8-docstrings==1.7.0            # Docstring linting
+flake8-import-order==0.18.2         # Import order checking
+
+# Type checking
+mypy==1.7.1                         # Static type checker
+types-redis==4.6.0.11               # Type stubs for Redis
+types-requests==2.31.0.10           # Type stubs for requests
+
+# Code complexity analysis
+radon==6.0.1                        # Code complexity metrics
+bandit==1.7.5                       # Security linter
+
+# ================================================================================================
+# DOCUMENTATION GENERATION
+# ================================================================================================
+
+# Documentation tools
+mkdocs==1.5.3                       # Documentation generator
+mkdocs-material==9.4.7              # Material Design theme for MkDocs
+sphinx==7.2.6                       # Documentation generator (alternative)
+sphinx-autodoc-typehints==1.25.2    # Type hints in Sphinx docs
+
+# ================================================================================================
+# DATA VISUALIZATION (OPTIONAL)
+# ================================================================================================
+
+# Plotting and visualization
+matplotlib==3.8.2                   # Plotting library
+seaborn==0.13.0                     # Statistical data visualization
+plotly==5.17.0                      # Interactive plotting
+
+# ================================================================================================
+# SYSTEM AND UTILITIES
+# ================================================================================================
+
+# Date and time handling
+python-dateutil==2.8.2              # Date/time extensions
+pytz==2023.3                        # Timezone definitions
+arrow==1.3.0                        # Better date/time handling
+
+# File and path utilities
+pathlib2==2.3.7                     # Object-oriented filesystem paths (backport)
+watchdog==3.0.0                     # File system event monitoring
+
+# Network utilities
+dnspython==2.4.2                    # DNS toolkit
+netifaces==0.11.0                   # Network interface information
+
+# Serialization and data formats
+orjson==3.9.10                      # Fast JSON serialization
+msgpack==1.0.7                      # MessagePack serialization
+pyyaml==6.0.1                       # YAML parser and emitter
+
+# ================================================================================================
+# SYSTEM DEPENDENCIES AND PLATFORM-SPECIFIC
+# ================================================================================================
+
+# Windows-specific dependencies
+pywin32==306; sys_platform == "win32"    # Windows API access
+wmi==1.5.1; sys_platform == "win32"      # Windows Management Instrumentation
+
+# Linux-specific dependencies
+python-systemd==235; sys_platform == "linux"  # systemd integration
+
+# ================================================================================================
+# OPTIONAL PERFORMANCE ENHANCEMENTS
+# ================================================================================================
+
+# Performance optimization libraries
+ujson==5.8.0                        # Ultra-fast JSON encoder/decoder
+cython==3.0.5                       # Cython compiler for Python
+numba==0.58.1                       # JIT compiler for numerical functions
+
+# Memory profiling and optimization
+memory-profiler==0.61.0             # Memory usage profiling
+pympler==0.9                        # Memory analysis tools
+
+# ================================================================================================
+# CONTAINERIZATION AND DEPLOYMENT
+# ================================================================================================
+
+# Docker and container utilities
+docker==6.1.3                       # Docker API client
+docker-compose==1.29.2              # Docker Compose (if using programmatically)
+
+# Health checks and service discovery
+consul-python==1.1.0                # Consul service discovery client
+
+# ================================================================================================
+# MESSAGE QUEUES AND TASK PROCESSING (OPTIONAL)
+# ================================================================================================
+
+# Background task processing
+celery==5.3.4                       # Distributed task queue
+kombu==5.3.4                        # Message passing library
+flower==2.0.1                       # Celery monitoring tool
+
+# Message brokers
+pika==1.3.2                         # RabbitMQ client
+kafka-python==2.0.2                 # Apache Kafka client
+
+# ================================================================================================
+# API DOCUMENTATION AND VALIDATION
+# ================================================================================================
+
+# OpenAPI and API documentation
+apispec==6.3.0                      # OpenAPI specification generator
+apispec-webframeworks==0.5.2        # Web framework plugins for APISpec
+marshmallow==3.20.1                 # Object serialization/deserialization
+
+# ================================================================================================
+# EMAIL AND NOTIFICATIONS
+# ================================================================================================
+
+# Email handling
+emails==0.6                         # Email handling and templating
+jinja2==3.1.2                       # Template engine for emails
+premailer==3.10.0                   # CSS inlining for email
+
+# Push notifications
+pyfcm==1.5.4                        # Firebase Cloud Messaging
+
+# ================================================================================================
+# DEVELOPMENT TOOLS AND UTILITIES
+# ================================================================================================
+
+# Debugging and profiling
+pdb++==0.10.3                       # Enhanced Python debugger
+line-profiler==4.1.1                # Line-by-line profiling
+py-spy==0.3.14                      # Sampling profiler
+
+# Environment management
+pipenv==2023.11.15                  # Python dependency management
+pip-tools==7.3.0                    # pip utilities
+
+# ================================================================================================
+# SPECIAL INSTRUCTIONS AND NOTES
+# ================================================================================================
+
+# INSTALLATION NOTES:
+# -------------------
+# 1. Some packages may require system dependencies:
+#    - TA-Lib: Requires TA-Lib C library
+#    - QuantLib: Requires QuantLib C++ library
+#    - psycopg2: Requires PostgreSQL development headers
+#
+# 2. For Apple Silicon (M1/M2) Macs, some packages may need special installation:
+#    - Use conda for QuantLib-Python and TA-Lib
+#    - Consider using rosetta for compatibility
+#
+# 3. For production deployment:
+#    - Consider using wheels for faster installation
+#    - Use dependency scanning tools for security
+#    - Pin all dependencies including transitive ones
+#
+# 4. Optional dependencies:
+#    - Remove visualization libraries if not needed
+#    - Remove Windows/Linux specific dependencies based on deployment target
+#    - Remove optional performance libraries if not required
+
+# ================================================================================================
+# VERSION COMPATIBILITY MATRIX
+# ================================================================================================
+# Python Version Support: 3.8, 3.9, 3.10, 3.11 (recommended: 3.11)
+# Operating Systems: Windows 10+, Ubuntu 20.04+, macOS 11+
+# Docker Base Images: python:3.11-slim, python:3.11-alpine
+# 
+# SECURITY UPDATES:
+# Regularly update dependencies, especially:
+# - cryptography, requests, urllib3 (security-critical)
+# - All direct dependencies with known vulnerabilities
+# 
+# PERFORMANCE NOTES:
+# - Use uvloop on Unix systems for better async performance
+# - Consider PyPy for CPU-intensive workloads
+# - Use Cython extensions for hot code paths
+# 
+# Last updated: 2025-08-25 2:28 PM IST

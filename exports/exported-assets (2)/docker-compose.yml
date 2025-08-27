@@ -1,0 +1,406 @@
+version: '3.8'
+
+services:
+  # Redis for coordination and caching
+  redis:
+    image: redis:7-alpine
+    container_name: op-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+      - ./infrastructure/docker/redis.conf:/etc/redis/redis.conf
+    command: ["redis-server", "/etc/redis/redis.conf"]
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - op-network
+
+  # InfluxDB for time-series data (optional)
+  influxdb:
+    image: influxdb:2.7-alpine
+    container_name: op-influxdb
+    ports:
+      - "8086:8086"
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: ${INFLUXDB_USERNAME:-admin}
+      DOCKER_INFLUXDB_INIT_PASSWORD: ${INFLUXDB_PASSWORD:-password}
+      DOCKER_INFLUXDB_INIT_ORG: ${INFLUXDB_ORG:-op-trading}
+      DOCKER_INFLUXDB_INIT_BUCKET: ${INFLUXDB_BUCKET:-options-data}
+    volumes:
+      - influxdb_data:/var/lib/influxdb2
+      - influxdb_config:/etc/influxdb2
+    restart: unless-stopped
+    networks:
+      - op-network
+
+  # API Service
+  api:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile
+      target: api-service
+    container_name: op-api
+    ports:
+      - "8000:8000"
+    environment:
+      - ENV=production
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - INFLUXDB_URL=http://influxdb:8086
+      - INFLUXDB_ORG=${INFLUXDB_ORG:-op-trading}
+      - INFLUXDB_BUCKET=${INFLUXDB_BUCKET:-options-data}
+      - INFLUXDB_TOKEN=${INFLUXDB_TOKEN}
+      - KITE_API_KEY=${KITE_API_KEY}
+      - KITE_API_SECRET=${KITE_API_SECRET}
+      - KITE_ACCESS_TOKEN=${KITE_ACCESS_TOKEN}
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    depends_on:
+      redis:
+        condition: service_healthy
+      influxdb:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - op-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Collection Service
+  collection:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile  
+      target: collection-service
+    container_name: op-collection
+    environment:
+      - ENV=production
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - INFLUXDB_URL=http://influxdb:8086
+      - INFLUXDB_ORG=${INFLUXDB_ORG:-op-trading}
+      - INFLUXDB_BUCKET=${INFLUXDB_BUCKET:-options-data}
+      - INFLUXDB_TOKEN=${INFLUXDB_TOKEN}
+      - KITE_API_KEY=${KITE_API_KEY}
+      - KITE_API_SECRET=${KITE_API_SECRET}
+      - KITE_ACCESS_TOKEN=${KITE_ACCESS_TOKEN}
+      - COLLECTION_LOOP_INTERVAL=30
+      - PROCESSING_BATCH_SIZE=1000
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    depends_on:
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - op-network
+
+  # Processing Service
+  processing:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile
+      target: processing-service
+    container_name: op-processing
+    environment:
+      - ENV=production
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - PROCESSING_BATCH_SIZE=1000
+      - PROCESSING_MAX_WORKERS=8
+      - ENABLE_INCREMENTAL=true
+      - USE_MEMORY_MAPPING=true
+      - MAX_MEMORY_USAGE_MB=2048
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - op-network
+
+  # Analytics Service
+  analytics:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile
+      target: analytics-service
+    container_name: op-analytics
+    environment:
+      - ENV=production
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - INFLUXDB_URL=http://influxdb:8086
+      - INFLUXDB_ORG=${INFLUXDB_ORG:-op-trading}
+      - INFLUXDB_BUCKET=${INFLUXDB_BUCKET:-options-data}
+      - INFLUXDB_TOKEN=${INFLUXDB_TOKEN}
+      - ANALYTICS_STREAMING_ENABLED=true
+      - ANALYTICS_EOD_ENABLED=true
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    depends_on:
+      redis:
+        condition: service_healthy
+      processing:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - op-network
+
+  # Monitoring Service
+  monitoring:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/Dockerfile
+      target: monitoring-service
+    container_name: op-monitoring
+    environment:
+      - ENV=production
+      - REDIS_HOST=redis
+      - REDIS_PORT=6379
+      - HEALTH_CHECK_INTERVAL=30
+      - AUTO_RESTART_ENABLED=true
+      - MAX_RESTART_ATTEMPTS=3
+      - SMTP_SERVER=${SMTP_SERVER}
+      - SMTP_PORT=${SMTP_PORT:-587}
+      - SMTP_USER=${SMTP_USER}
+      - SMTP_PASSWORD=${SMTP_PASSWORD}
+      - ALERT_RECIPIENTS=${ALERT_RECIPIENTS}
+      - LOG_LEVEL=INFO
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+    restart: unless-stopped
+    networks:
+      - op-network
+
+  # Prometheus for metrics collection (optional)
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: op-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./infrastructure/monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=200h'
+      - '--web.enable-lifecycle'
+    restart: unless-stopped
+    networks:
+      - op-network
+
+  # Grafana for dashboards (optional)
+  grafana:
+    image: grafana/grafana:latest
+    container_name: op-grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+      - GF_USERS_ALLOW_SIGN_UP=false
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./infrastructure/grafana/provisioning:/etc/grafana/provisioning
+      - ./infrastructure/grafana/dashboards:/var/lib/grafana/dashboards
+    restart: unless-stopped
+    networks:
+      - op-network
+    depends_on:
+      - prometheus
+
+  # NGINX reverse proxy (optional)
+  nginx:
+    image: nginx:alpine
+    container_name: op-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./infrastructure/nginx/nginx.conf:/etc/nginx/nginx.conf
+      - ./infrastructure/nginx/ssl:/etc/nginx/ssl
+    depends_on:
+      - api
+      - grafana
+    restart: unless-stopped
+    networks:
+      - op-network
+
+volumes:
+  redis_data:
+    driver: local
+  influxdb_data:
+    driver: local
+  influxdb_config:
+    driver: local
+  prometheus_data:
+    driver: local
+  grafana_data:
+    driver: local
+
+networks:
+  op-network:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+# Development override
+---
+version: '3.8'
+
+# docker-compose.dev.yml - Override for development
+services:
+  api:
+    build:
+      target: development
+    ports:
+      - "8000:8000"
+    environment:
+      - ENV=development
+      - DEBUG=true
+      - LOG_LEVEL=DEBUG
+    volumes:
+      - .:/app
+      - /app/__pycache__
+    command: ["uvicorn", "services.api.api_service:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+  collection:
+    build:
+      target: development
+    environment:
+      - ENV=development
+      - DEBUG=true
+      - LOG_LEVEL=DEBUG
+      - COLLECTION_LOOP_INTERVAL=10
+    volumes:
+      - .:/app
+      - /app/__pycache__
+
+  processing:
+    build:
+      target: development
+    environment:
+      - ENV=development
+      - DEBUG=true
+      - LOG_LEVEL=DEBUG
+    volumes:
+      - .:/app
+      - /app/__pycache__
+
+  analytics:
+    build:
+      target: development
+    environment:
+      - ENV=development
+      - DEBUG=true
+      - LOG_LEVEL=DEBUG
+    volumes:
+      - .:/app
+      - /app/__pycache__
+
+  monitoring:
+    build:
+      target: development
+    environment:
+      - ENV=development
+      - DEBUG=true
+      - LOG_LEVEL=DEBUG
+    volumes:
+      - .:/app
+      - /app/__pycache__
+
+# Production override  
+---
+version: '3.8'
+
+# docker-compose.prod.yml - Override for production
+services:
+  api:
+    deploy:
+      replicas: 3
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    environment:
+      - ENV=production
+      - DEBUG=false
+      - LOG_LEVEL=INFO
+
+  collection:
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 512M
+        reservations:
+          cpus: '0.25'
+          memory: 256M
+
+  processing:
+    deploy:
+      replicas: 2
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 1G
+
+  analytics:
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+
+  monitoring:
+    deploy:
+      replicas: 1
+      resources:
+        limits:
+          cpus: '0.25'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 128M

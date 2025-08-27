@@ -1,0 +1,501 @@
+version: '3.8'
+
+# ========================================================================================================
+# OP TRADING PLATFORM - COMPLETE DOCKER COMPOSE CONFIGURATION
+# ========================================================================================================
+# Version: 3.1.2 - Production-Ready Multi-Service Orchestration
+# Author: OP Trading Platform Team
+# Date: 2025-08-25 10:50 PM IST
+# 
+# COMPREHENSIVE INFRASTRUCTURE STACK:
+# ✓ InfluxDB 2.x with infinite retention for regulatory compliance
+# ✓ Redis for high-performance caching and coordination  
+# ✓ Prometheus for metrics collection and monitoring
+# ✓ Grafana for advanced data visualization and dashboards
+# ✓ Nginx for load balancing and SSL termination
+# ✓ Complete networking and volume management
+# ✓ Health checks and automatic restarts
+# ✓ Environment-based configuration
+# 
+# USAGE:
+#   docker-compose up -d                    # Start all services
+#   docker-compose up -d influxdb redis    # Start core services only
+#   docker-compose logs -f influxdb        # View InfluxDB logs
+#   docker-compose down                     # Stop all services
+# ========================================================================================================
+
+services:
+  # ======================================================================================================
+  # INFLUXDB 2.x - TIME-SERIES DATABASE WITH INFINITE RETENTION
+  # ======================================================================================================
+  influxdb:
+    image: influxdb:2.7-alpine
+    container_name: op-influxdb
+    restart: unless-stopped
+    ports:
+      - "${INFLUXDB_PORT:-8086}:8086"
+    environment:
+      # Initial setup configuration (only applies on first run with empty volumes)
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: ${INFLUXDB_ADMIN_USER:-admin}
+      DOCKER_INFLUXDB_INIT_PASSWORD: ${INFLUXDB_ADMIN_PASSWORD:-adminpass123}
+      DOCKER_INFLUXDB_INIT_ORG: ${INFLUXDB_ORG:-op-trading}
+      DOCKER_INFLUXDB_INIT_BUCKET: ${INFLUXDB_BUCKET:-options-data}
+      DOCKER_INFLUXDB_INIT_RETENTION: ${INFLUXDB_RETENTION:-0s}  # 0s = infinite retention
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: ${INFLUXDB_TOKEN:-VFEhioeCi2vFCtv-dH_7Fe6gEgNtO-Tu7qcQW4WvIbAFQIdKGa_hDu4dxatOgwskZcva4CHkeOPbjkQwAvPyVg==}
+      
+      # Performance optimization
+      INFLUXD_STORAGE_WAL_FSYNC_DELAY: 1s
+      INFLUXD_STORAGE_CACHE_MAX_MEMORY_SIZE: 1073741824  # 1GB cache
+      INFLUXD_HTTP_READ_TIMEOUT: 30s
+      INFLUXD_HTTP_WRITE_TIMEOUT: 30s
+    volumes:
+      - influxdb-data:/var/lib/influxdb2
+      - influxdb-config:/etc/influxdb2
+      - influxdb-wal:/var/lib/influxdb2/wal
+    networks:
+      - op-trading-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8086/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+          cpus: '2.0'
+        reservations:
+          memory: 512M
+          cpus: '0.5'
+    labels:
+      - "com.op-trading.service=influxdb"
+      - "com.op-trading.environment=${ENV:-development}"
+
+  # ======================================================================================================
+  # REDIS - HIGH-PERFORMANCE CACHING AND COORDINATION
+  # ======================================================================================================
+  redis:
+    image: redis:7-alpine
+    container_name: op-redis
+    restart: unless-stopped
+    ports:
+      - "${REDIS_PORT:-6379}:6379"
+    command: >
+      redis-server
+      --save 60 1000
+      --loglevel ${REDIS_LOG_LEVEL:-warning}
+      --maxmemory ${REDIS_MAX_MEMORY:-1gb}
+      --maxmemory-policy allkeys-lru
+      --tcp-keepalive 300
+      --timeout 0
+      --databases 16
+    volumes:
+      - redis-data:/data
+      - redis-conf:/usr/local/etc/redis
+    networks:
+      - op-trading-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+        reservations:
+          memory: 256M
+          cpus: '0.2'
+    labels:
+      - "com.op-trading.service=redis"
+      - "com.op-trading.environment=${ENV:-development}"
+
+  # ======================================================================================================
+  # PROMETHEUS - METRICS COLLECTION AND MONITORING
+  # ======================================================================================================  
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: op-prometheus
+    restart: unless-stopped
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=${PROMETHEUS_RETENTION:-90d}'
+      - '--storage.tsdb.retention.size=${PROMETHEUS_STORAGE_SIZE:-10GB}'
+      - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
+      - '--log.level=${PROMETHEUS_LOG_LEVEL:-info}'
+    volumes:
+      - ./config/prometheus:/etc/prometheus
+      - prometheus-data:/prometheus
+    networks:
+      - op-trading-network
+    depends_on:
+      - influxdb
+      - redis
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://localhost:9090/-/healthy || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+        reservations:
+          memory: 256M
+          cpus: '0.2'
+    labels:
+      - "com.op-trading.service=prometheus"
+      - "com.op-trading.environment=${ENV:-development}"
+
+  # ======================================================================================================
+  # GRAFANA - ADVANCED DATA VISUALIZATION AND DASHBOARDS  
+  # ======================================================================================================
+  grafana:
+    image: grafana/grafana:10.2.2
+    container_name: op-grafana
+    restart: unless-stopped
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    environment:
+      # Security configuration
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin123}
+      GF_SECURITY_SECRET_KEY: ${GRAFANA_SECRET_KEY:-SW2YcwTIb9zpOOhoPsMm}
+      
+      # Server configuration
+      GF_SERVER_ROOT_URL: ${GRAFANA_ROOT_URL:-http://localhost:3000/}
+      GF_SERVER_SERVE_FROM_SUB_PATH: false
+      
+      # Database configuration (using SQLite by default)
+      GF_DATABASE_TYPE: sqlite3
+      GF_DATABASE_PATH: /var/lib/grafana/grafana.db
+      
+      # Plugin installation
+      GF_INSTALL_PLUGINS: >
+        grafana-piechart-panel,
+        grafana-worldmap-panel,
+        grafana-clock-panel,
+        natel-discrete-panel,
+        vonage-status-panel
+      
+      # Authentication
+      GF_AUTH_ANONYMOUS_ENABLED: false
+      GF_AUTH_BASIC_ENABLED: true
+      
+      # Users and organizations
+      GF_USERS_ALLOW_SIGN_UP: false
+      GF_USERS_ALLOW_ORG_CREATE: false
+      GF_ORG_NAME: ${GRAFANA_ORG_NAME:-OP Trading Platform}
+      
+      # Logging
+      GF_LOG_MODE: console
+      GF_LOG_LEVEL: ${GRAFANA_LOG_LEVEL:-info}
+      
+      # Performance
+      GF_RENDERING_SERVER_URL: http://renderer:8081/render
+      GF_RENDERING_CALLBACK_URL: http://grafana:3000/
+      
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - grafana-logs:/var/log/grafana
+      - ./config/grafana/provisioning:/etc/grafana/provisioning
+      - ./config/grafana/dashboards:/var/lib/grafana/dashboards
+    networks:
+      - op-trading-network
+    depends_on:
+      - influxdb
+      - prometheus
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 60s
+    deploy:
+      resources:
+        limits:
+          memory: 1G
+          cpus: '1.0'
+        reservations:
+          memory: 256M
+          cpus: '0.2'
+    labels:
+      - "com.op-trading.service=grafana"
+      - "com.op-trading.environment=${ENV:-development}"
+
+  # ======================================================================================================
+  # NGINX - LOAD BALANCER AND REVERSE PROXY
+  # ======================================================================================================
+  nginx:
+    image: nginx:1.25-alpine
+    container_name: op-nginx
+    restart: unless-stopped
+    ports:
+      - "${NGINX_HTTP_PORT:-80}:80"
+      - "${NGINX_HTTPS_PORT:-443}:443"
+    volumes:
+      - ./config/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./config/nginx/conf.d:/etc/nginx/conf.d:ro
+      - ./config/nginx/ssl:/etc/nginx/ssl:ro
+      - nginx-logs:/var/log/nginx
+    networks:
+      - op-trading-network
+    depends_on:
+      - grafana
+      - prometheus
+    healthcheck:
+      test: ["CMD", "nginx", "-t"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.5'
+        reservations:
+          memory: 64M
+          cpus: '0.1'
+    labels:
+      - "com.op-trading.service=nginx"
+      - "com.op-trading.environment=${ENV:-development}"
+
+  # ======================================================================================================
+  # GRAFANA RENDERER - PDF AND PNG EXPORT SERVICE
+  # ======================================================================================================
+  renderer:
+    image: grafana/grafana-image-renderer:3.8.3
+    container_name: op-renderer
+    restart: unless-stopped
+    environment:
+      ENABLE_METRICS: true
+      HTTP_PORT: 8081
+      LOG_LEVEL: ${RENDERER_LOG_LEVEL:-info}
+      WIDTH: 1920
+      HEIGHT: 1080
+      RENDERING_TIMEOUT: 30
+      RENDERING_DELAY: 200
+    networks:
+      - op-trading-network
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8081/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 128M
+          cpus: '0.1'
+    labels:
+      - "com.op-trading.service=renderer"
+      - "com.op-trading.environment=${ENV:-development}"
+
+  # ======================================================================================================
+  # BACKUP SERVICE - AUTOMATED DATA BACKUP
+  # ======================================================================================================
+  backup:
+    image: alpine:3.18
+    container_name: op-backup
+    restart: unless-stopped
+    environment:
+      BACKUP_INTERVAL: ${BACKUP_INTERVAL:-24h}
+      BACKUP_RETENTION: ${BACKUP_RETENTION:-30}
+      BACKUP_PATH: /backups
+    volumes:
+      - influxdb-data:/source/influxdb:ro
+      - redis-data:/source/redis:ro
+      - grafana-data:/source/grafana:ro
+      - backup-data:/backups
+      - ./scripts/backup.sh:/usr/local/bin/backup.sh:ro
+    networks:
+      - op-trading-network
+    command: >
+      sh -c "
+        echo 'Starting backup service...' &&
+        apk add --no-cache curl tar gzip &&
+        chmod +x /usr/local/bin/backup.sh &&
+        while true; do
+          /usr/local/bin/backup.sh
+          sleep $${BACKUP_INTERVAL:-86400}
+        done
+      "
+    depends_on:
+      - influxdb
+      - redis
+      - grafana
+    labels:
+      - "com.op-trading.service=backup"
+      - "com.op-trading.environment=${ENV:-development}"
+
+# ========================================================================================================
+# PERSISTENT VOLUMES CONFIGURATION
+# ========================================================================================================
+volumes:
+  # InfluxDB volumes
+  influxdb-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_PATH:-./data}/influxdb
+  influxdb-config:
+    driver: local
+  influxdb-wal:
+    driver: local
+    
+  # Redis volumes  
+  redis-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_PATH:-./data}/redis
+  redis-conf:
+    driver: local
+    
+  # Prometheus volumes
+  prometheus-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_PATH:-./data}/prometheus
+      
+  # Grafana volumes
+  grafana-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${DATA_PATH:-./data}/grafana
+  grafana-logs:
+    driver: local
+    
+  # Nginx volumes
+  nginx-logs:
+    driver: local
+    
+  # Backup volumes
+  backup-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${BACKUP_PATH:-./backups}
+
+# ========================================================================================================
+# NETWORK CONFIGURATION
+# ========================================================================================================
+networks:
+  op-trading-network:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: br-op-trading
+    ipam:
+      driver: default
+      config:
+        - subnet: ${NETWORK_SUBNET:-172.20.0.0/16}
+          gateway: ${NETWORK_GATEWAY:-172.20.0.1}
+    labels:
+      - "com.op-trading.network=main"
+      - "com.op-trading.environment=${ENV:-development}"
+
+# ========================================================================================================
+# ADDITIONAL CONFIGURATION NOTES
+# ========================================================================================================
+# 
+# ENVIRONMENT VARIABLES:
+# Create a .env file in the same directory with the following variables:
+# 
+# # Core Configuration
+# ENV=development
+# DATA_PATH=./data
+# BACKUP_PATH=./backups
+# 
+# # InfluxDB Configuration  
+# INFLUXDB_PORT=8086
+# INFLUXDB_ADMIN_USER=admin
+# INFLUXDB_ADMIN_PASSWORD=secure_password_here
+# INFLUXDB_ORG=op-trading
+# INFLUXDB_BUCKET=options-data
+# INFLUXDB_TOKEN=your_secure_token_here
+# 
+# # Redis Configuration
+# REDIS_PORT=6379
+# REDIS_MAX_MEMORY=1gb
+# REDIS_LOG_LEVEL=warning
+# 
+# # Grafana Configuration
+# GRAFANA_PORT=3000
+# GRAFANA_ADMIN_USER=admin  
+# GRAFANA_ADMIN_PASSWORD=secure_password_here
+# GRAFANA_SECRET_KEY=your_secret_key_here
+# 
+# # Prometheus Configuration
+# PROMETHEUS_PORT=9090
+# PROMETHEUS_RETENTION=90d
+# PROMETHEUS_STORAGE_SIZE=10GB
+# 
+# # Network Configuration
+# NETWORK_SUBNET=172.20.0.0/16
+# NETWORK_GATEWAY=172.20.0.1
+# 
+# USAGE EXAMPLES:
+# 
+# # Start all services
+# docker-compose up -d
+# 
+# # Start only core services (InfluxDB + Redis)
+# docker-compose up -d influxdb redis
+# 
+# # View logs for specific service
+# docker-compose logs -f influxdb
+# 
+# # Scale Grafana to multiple instances
+# docker-compose up -d --scale grafana=2
+# 
+# # Update service configuration
+# docker-compose up -d --force-recreate influxdb
+# 
+# # Stop all services
+# docker-compose down
+# 
+# # Stop and remove volumes (WARNING: Data loss)
+# docker-compose down -v
+# 
+# HEALTH MONITORING:
+# - InfluxDB: http://localhost:8086/health
+# - Redis: redis-cli ping
+# - Prometheus: http://localhost:9090/-/healthy  
+# - Grafana: http://localhost:3000/api/health
+# 
+# DATA PERSISTENCE:
+# All data is persisted in Docker volumes and bind mounts to ./data directory
+# Regular backups are created by the backup service
+# 
+# SECURITY CONSIDERATIONS:
+# - Change default passwords in production
+# - Use strong tokens and secret keys
+# - Enable SSL/TLS in production
+# - Restrict network access as needed
+# - Regular security updates
+# 
+# ========================================================================================================

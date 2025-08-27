@@ -1,0 +1,750 @@
+# Kubernetes deployment manifests for OP Trading Platform
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: op-trading
+  labels:
+    app.kubernetes.io/name: op-trading
+    app.kubernetes.io/version: "1.0.0"
+
+---
+# ConfigMap for application configuration
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: op-config
+  namespace: op-trading
+data:
+  ENV: "production"
+  LOG_LEVEL: "INFO"
+  REDIS_HOST: "redis-service"
+  REDIS_PORT: "6379"
+  INFLUXDB_URL: "http://influxdb-service:8086"
+  INFLUXDB_ORG: "op-trading"
+  INFLUXDB_BUCKET: "options-data"
+  PROCESSING_BATCH_SIZE: "1000"
+  PROCESSING_MAX_WORKERS: "8"
+  ENABLE_INCREMENTAL: "true"
+  USE_MEMORY_MAPPING: "true"
+  MAX_MEMORY_USAGE_MB: "2048"
+  COLLECTION_LOOP_INTERVAL: "30"
+  ANALYTICS_STREAMING_ENABLED: "true"
+  ANALYTICS_EOD_ENABLED: "true"
+  HEALTH_CHECK_INTERVAL: "30"
+  AUTO_RESTART_ENABLED: "true"
+  MAX_RESTART_ATTEMPTS: "3"
+
+---
+# Secret for sensitive configuration
+apiVersion: v1
+kind: Secret
+metadata:
+  name: op-secrets
+  namespace: op-trading
+type: Opaque
+stringData:
+  KITE_API_KEY: "your-api-key"
+  KITE_API_SECRET: "your-api-secret"
+  KITE_ACCESS_TOKEN: "your-access-token"
+  INFLUXDB_TOKEN: "your-influxdb-token"
+  REDIS_PASSWORD: "your-redis-password"
+  SMTP_USER: "your-smtp-user"
+  SMTP_PASSWORD: "your-smtp-password"
+
+---
+# Persistent Volume for data storage
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: op-data-pv
+  namespace: op-trading
+spec:
+  capacity:
+    storage: 100Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: manual
+  hostPath:
+    path: /mnt/data/op-trading
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: op-data-pvc
+  namespace: op-trading
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 100Gi
+  storageClassName: manual
+
+---
+# Redis Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: redis
+  namespace: op-trading
+  labels:
+    app: redis
+    component: database
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: redis
+  template:
+    metadata:
+      labels:
+        app: redis
+        component: database
+    spec:
+      containers:
+      - name: redis
+        image: redis:7-alpine
+        ports:
+        - containerPort: 6379
+          name: redis
+        resources:
+          requests:
+            cpu: 100m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        volumeMounts:
+        - name: redis-data
+          mountPath: /data
+        livenessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          exec:
+            command:
+            - redis-cli
+            - ping
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: redis-data
+        emptyDir: {}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: redis-service
+  namespace: op-trading
+  labels:
+    app: redis
+spec:
+  selector:
+    app: redis
+  ports:
+  - port: 6379
+    targetPort: 6379
+    name: redis
+  type: ClusterIP
+
+---
+# InfluxDB Deployment  
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: influxdb
+  namespace: op-trading
+  labels:
+    app: influxdb
+    component: database
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: influxdb
+  template:
+    metadata:
+      labels:
+        app: influxdb
+        component: database
+    spec:
+      containers:
+      - name: influxdb
+        image: influxdb:2.7-alpine
+        ports:
+        - containerPort: 8086
+          name: http
+        env:
+        - name: DOCKER_INFLUXDB_INIT_MODE
+          value: "setup"
+        - name: DOCKER_INFLUXDB_INIT_USERNAME
+          value: "admin"
+        - name: DOCKER_INFLUXDB_INIT_PASSWORD
+          value: "password"
+        - name: DOCKER_INFLUXDB_INIT_ORG
+          valueFrom:
+            configMapKeyRef:
+              name: op-config
+              key: INFLUXDB_ORG
+        - name: DOCKER_INFLUXDB_INIT_BUCKET
+          valueFrom:
+            configMapKeyRef:
+              name: op-config
+              key: INFLUXDB_BUCKET
+        resources:
+          requests:
+            cpu: 200m
+            memory: 512Mi
+          limits:
+            cpu: 1000m
+            memory: 2Gi
+        volumeMounts:
+        - name: influxdb-data
+          mountPath: /var/lib/influxdb2
+        livenessProbe:
+          httpGet:
+            path: /ping
+            port: 8086
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /ping
+            port: 8086
+          initialDelaySeconds: 5
+          periodSeconds: 5
+      volumes:
+      - name: influxdb-data
+        emptyDir: {}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: influxdb-service
+  namespace: op-trading
+  labels:
+    app: influxdb
+spec:
+  selector:
+    app: influxdb
+  ports:
+  - port: 8086
+    targetPort: 8086
+    name: http
+  type: ClusterIP
+
+---
+# API Service Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+  namespace: op-trading
+  labels:
+    app: api
+    component: service
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: api
+  template:
+    metadata:
+      labels:
+        app: api
+        component: service
+    spec:
+      containers:
+      - name: api
+        image: op-trading/api:latest
+        ports:
+        - containerPort: 8000
+          name: http
+        env:
+        - name: ENV
+          valueFrom:
+            configMapKeyRef:
+              name: op-config
+              key: ENV
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: op-config
+              key: LOG_LEVEL
+        - name: REDIS_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: op-config
+              key: REDIS_HOST
+        - name: REDIS_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: op-config
+              key: REDIS_PORT
+        - name: INFLUXDB_URL
+          valueFrom:
+            configMapKeyRef:
+              name: op-config
+              key: INFLUXDB_URL
+        - name: INFLUXDB_ORG
+          valueFrom:
+            configMapKeyRef:
+              name: op-config
+              key: INFLUXDB_ORG
+        - name: INFLUXDB_BUCKET
+          valueFrom:
+            configMapKeyRef:
+              name: op-config
+              key: INFLUXDB_BUCKET
+        - name: INFLUXDB_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: op-secrets
+              key: INFLUXDB_TOKEN
+        resources:
+          requests:
+            cpu: 500m
+            memory: 512Mi
+          limits:
+            cpu: 1000m
+            memory: 1Gi
+        volumeMounts:
+        - name: data-storage
+          mountPath: /app/data
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8000
+          initialDelaySeconds: 10
+          periodSeconds: 10
+      volumes:
+      - name: data-storage
+        persistentVolumeClaim:
+          claimName: op-data-pvc
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-service
+  namespace: op-trading
+  labels:
+    app: api
+spec:
+  selector:
+    app: api
+  ports:
+  - port: 8000
+    targetPort: 8000
+    name: http
+  type: LoadBalancer
+
+---
+# Collection Service Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: collection
+  namespace: op-trading
+  labels:
+    app: collection
+    component: service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: collection
+  template:
+    metadata:
+      labels:
+        app: collection
+        component: service
+    spec:
+      containers:
+      - name: collection
+        image: op-trading/collection:latest
+        env:
+        - name: ENV
+          valueFrom:
+            configMapKeyRef:
+              name: op-config
+              key: ENV
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: op-config
+              key: LOG_LEVEL
+        - name: REDIS_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: op-config
+              key: REDIS_HOST
+        - name: REDIS_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: op-config
+              key: REDIS_PORT
+        - name: INFLUXDB_URL
+          valueFrom:
+            configMapKeyRef:
+              name: op-config
+              key: INFLUXDB_URL
+        - name: INFLUXDB_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: op-secrets
+              key: INFLUXDB_TOKEN
+        - name: KITE_API_KEY
+          valueFrom:
+            secretKeyRef:
+              name: op-secrets
+              key: KITE_API_KEY
+        - name: KITE_API_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: op-secrets
+              key: KITE_API_SECRET
+        - name: KITE_ACCESS_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: op-secrets
+              key: KITE_ACCESS_TOKEN
+        - name: COLLECTION_LOOP_INTERVAL
+          valueFrom:
+            configMapKeyRef:
+              name: op-config
+              key: COLLECTION_LOOP_INTERVAL
+        resources:
+          requests:
+            cpu: 250m
+            memory: 256Mi
+          limits:
+            cpu: 500m
+            memory: 512Mi
+        volumeMounts:
+        - name: data-storage
+          mountPath: /app/data
+      volumes:
+      - name: data-storage
+        persistentVolumeClaim:
+          claimName: op-data-pvc
+
+---
+# Processing Service Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: processing
+  namespace: op-trading
+  labels:
+    app: processing
+    component: service
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: processing
+  template:
+    metadata:
+      labels:
+        app: processing
+        component: service
+    spec:
+      containers:
+      - name: processing
+        image: op-trading/processing:latest
+        env:
+        - name: ENV
+          valueFrom:
+            configMapKeyRef:
+              name: op-config
+              key: ENV
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: op-config
+              key: LOG_LEVEL
+        - name: REDIS_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: op-config
+              key: REDIS_HOST
+        - name: REDIS_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: op-config
+              key: REDIS_PORT
+        - name: PROCESSING_BATCH_SIZE
+          valueFrom:
+            configMapKeyRef:
+              name: op-config
+              key: PROCESSING_BATCH_SIZE
+        - name: PROCESSING_MAX_WORKERS
+          valueFrom:
+            configMapKeyRef:
+              name: op-config
+              key: PROCESSING_MAX_WORKERS
+        - name: ENABLE_INCREMENTAL
+          valueFrom:
+            configMapKeyRef:
+              name: op-config
+              key: ENABLE_INCREMENTAL
+        - name: USE_MEMORY_MAPPING
+          valueFrom:
+            configMapKeyRef:
+              name: op-config
+              key: USE_MEMORY_MAPPING
+        - name: MAX_MEMORY_USAGE_MB
+          valueFrom:
+            configMapKeyRef:
+              name: op-config
+              key: MAX_MEMORY_USAGE_MB
+        resources:
+          requests:
+            cpu: 500m
+            memory: 1Gi
+          limits:
+            cpu: 1000m
+            memory: 2Gi
+        volumeMounts:
+        - name: data-storage
+          mountPath: /app/data
+      volumes:
+      - name: data-storage
+        persistentVolumeClaim:
+          claimName: op-data-pvc
+
+---
+# Analytics Service Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: analytics
+  namespace: op-trading
+  labels:
+    app: analytics
+    component: service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: analytics
+  template:
+    metadata:
+      labels:
+        app: analytics
+        component: service
+    spec:
+      containers:
+      - name: analytics
+        image: op-trading/analytics:latest
+        env:
+        - name: ENV
+          valueFrom:
+            configMapKeyRef:
+              name: op-config
+              key: ENV
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: op-config
+              key: LOG_LEVEL
+        - name: REDIS_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: op-config
+              key: REDIS_HOST
+        - name: REDIS_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: op-config
+              key: REDIS_PORT
+        - name: INFLUXDB_URL
+          valueFrom:
+            configMapKeyRef:
+              name: op-config
+              key: INFLUXDB_URL
+        - name: INFLUXDB_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: op-secrets
+              key: INFLUXDB_TOKEN
+        - name: ANALYTICS_STREAMING_ENABLED
+          valueFrom:
+            configMapKeyRef:
+              name: op-config
+              key: ANALYTICS_STREAMING_ENABLED
+        - name: ANALYTICS_EOD_ENABLED
+          valueFrom:
+            configMapKeyRef:
+              name: op-config
+              key: ANALYTICS_EOD_ENABLED
+        resources:
+          requests:
+            cpu: 500m
+            memory: 512Mi
+          limits:
+            cpu: 1000m
+            memory: 1Gi
+        volumeMounts:
+        - name: data-storage
+          mountPath: /app/data
+      volumes:
+      - name: data-storage
+        persistentVolumeClaim:
+          claimName: op-data-pvc
+
+---
+# Monitoring Service Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: monitoring
+  namespace: op-trading
+  labels:
+    app: monitoring
+    component: service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: monitoring
+  template:
+    metadata:
+      labels:
+        app: monitoring
+        component: service
+    spec:
+      containers:
+      - name: monitoring
+        image: op-trading/monitoring:latest
+        env:
+        - name: ENV
+          valueFrom:
+            configMapKeyRef:
+              name: op-config
+              key: ENV
+        - name: LOG_LEVEL
+          valueFrom:
+            configMapKeyRef:
+              name: op-config
+              key: LOG_LEVEL
+        - name: REDIS_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: op-config
+              key: REDIS_HOST
+        - name: REDIS_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: op-config
+              key: REDIS_PORT
+        - name: HEALTH_CHECK_INTERVAL
+          valueFrom:
+            configMapKeyRef:
+              name: op-config
+              key: HEALTH_CHECK_INTERVAL
+        - name: AUTO_RESTART_ENABLED
+          valueFrom:
+            configMapKeyRef:
+              name: op-config
+              key: AUTO_RESTART_ENABLED
+        - name: MAX_RESTART_ATTEMPTS
+          valueFrom:
+            configMapKeyRef:
+              name: op-config
+              key: MAX_RESTART_ATTEMPTS
+        - name: SMTP_USER
+          valueFrom:
+            secretKeyRef:
+              name: op-secrets
+              key: SMTP_USER
+        - name: SMTP_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: op-secrets
+              key: SMTP_PASSWORD
+        resources:
+          requests:
+            cpu: 100m
+            memory: 128Mi
+          limits:
+            cpu: 250m
+            memory: 256Mi
+        volumeMounts:
+        - name: data-storage
+          mountPath: /app/data
+      volumes:
+      - name: data-storage
+        persistentVolumeClaim:
+          claimName: op-data-pvc
+
+---
+# Horizontal Pod Autoscaler for API service
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: api-hpa
+  namespace: op-trading
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: api
+  minReplicas: 2
+  maxReplicas: 10
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+  - type: Resource
+    resource:
+      name: memory
+      target:
+        type: Utilization
+        averageUtilization: 80
+
+---
+# Ingress for external access
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: op-trading-ingress
+  namespace: op-trading
+  annotations:
+    kubernetes.io/ingress.class: "nginx"
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    nginx.ingress.kubernetes.io/rate-limit: "100"
+spec:
+  tls:
+  - hosts:
+    - api.op-trading.com
+    secretName: op-trading-tls
+  rules:
+  - host: api.op-trading.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: api-service
+            port:
+              number: 8000

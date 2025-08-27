@@ -1,0 +1,23 @@
+apiVersion: 1
+
+datasources:
+  - name: InfluxDB-OptionsData
+    type: influxdb
+    access: proxy
+    url: http://influxdb:8086
+    database: options-data
+    user: admin
+    password: adminpass123
+    isDefault: true
+    jsonData:
+      organization: op-trading
+      defaultBucket: options-data
+      version: Flux
+    secureJsonData:
+      token: VFEhioeCi2vFCtv-dH_7Fe6gEgNtO-Tu7qcQW4WvIbAFQIdKGa_hDu4dxatOgwskZcva4CHkeOPbjkQwAvPyVg==
+
+  - name: Prometheus
+    type: prometheus
+    access: proxy
+    url: http://prometheus:9090
+    isDefault: false

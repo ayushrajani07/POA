@@ -1,0 +1,699 @@
+# ================================================================================================
+# OP TRADING PLATFORM - DOCKER COMPOSE CONFIGURATION
+# ================================================================================================
+# Version: 3.0.0 - Production-Ready Multi-Service Orchestration
+# Author: OP Trading Platform Team
+# Date: 2025-08-25 2:28 PM IST
+#
+# COMPREHENSIVE DOCKER ORCHESTRATION
+# This Docker Compose file provides complete infrastructure orchestration for:
+# - InfluxDB v2 with infinite retention for regulatory compliance
+# - Redis for high-performance caching and coordination
+# - Prometheus for metrics collection and monitoring
+# - Grafana for visualization and dashboards
+# - Nginx for load balancing and reverse proxy (production mode)
+#
+# DEPLOYMENT MODES:
+# - Development: docker-compose up -d influxdb redis prometheus grafana
+# - Production: docker-compose up -d (includes all services with Nginx)
+#
+# USAGE:
+#   docker-compose up -d                    # Start all services
+#   docker-compose up -d influxdb redis    # Start only core services
+#   docker-compose logs -f                 # View logs
+#   docker-compose down                    # Stop all services
+#   docker-compose down -v                 # Stop and remove volumes (DATA LOSS!)
+# ================================================================================================
+
+version: '3.8'
+
+# ================================================================================================
+# SHARED CONFIGURATION
+# ================================================================================================
+
+x-common-labels: &common-labels
+  com.op-trading.platform: "true"
+  com.op-trading.version: "3.0.0"
+  com.op-trading.environment: "${DEPLOYMENT_MODE:-development}"
+
+x-logging: &default-logging
+  driver: "json-file"
+  options:
+    max-size: "100m"
+    max-file: "3"
+    tag: "{{.ImageName}}|{{.Name}}|{{.ImageFullID}}|{{.FullID}}"
+
+x-restart-policy: &restart-policy
+  restart: unless-stopped
+
+x-healthcheck-defaults: &healthcheck-defaults
+  interval: 30s
+  timeout: 10s
+  retries: 3
+  start_period: 40s
+
+# ================================================================================================
+# DOCKER NETWORKS
+# ================================================================================================
+
+networks:
+  op-trading-network:
+    driver: bridge
+    labels:
+      <<: *common-labels
+      com.op-trading.network.type: "internal"
+    ipam:
+      config:
+        - subnet: 172.20.0.0/16
+
+  op-trading-external:
+    driver: bridge
+    labels:
+      <<: *common-labels
+      com.op-trading.network.type: "external"
+
+# ================================================================================================
+# DOCKER VOLUMES WITH PERSISTENCE
+# ================================================================================================
+
+volumes:
+  # InfluxDB data volume - CRITICAL: Contains all market data with infinite retention
+  influxdb2-data:
+    driver: local
+    labels:
+      <<: *common-labels
+      com.op-trading.volume.type: "data"
+      com.op-trading.volume.critical: "true"
+      com.op-trading.volume.backup: "required"
+
+  # InfluxDB configuration volume
+  influxdb2-config:
+    driver: local
+    labels:
+      <<: *common-labels
+      com.op-trading.volume.type: "config"
+
+  # Redis data volume - Contains cached market data and session information
+  redis-data:
+    driver: local
+    labels:
+      <<: *common-labels
+      com.op-trading.volume.type: "cache"
+
+  # Grafana data volume - Contains dashboards and configuration
+  grafana-data:
+    driver: local
+    labels:
+      <<: *common-labels
+      com.op-trading.volume.type: "dashboards"
+
+  # Prometheus data volume - Contains metrics and time-series monitoring data
+  prometheus-data:
+    driver: local
+    labels:
+      <<: *common-labels
+      com.op-trading.volume.type: "metrics"
+
+  # Nginx configuration volume
+  nginx-config:
+    driver: local
+    labels:
+      <<: *common-labels
+      com.op-trading.volume.type: "config"
+
+# ================================================================================================
+# CORE SERVICES DEFINITION
+# ================================================================================================
+
+services:
+  
+  # ================================================================================================
+  # INFLUXDB - TIME-SERIES DATABASE WITH INFINITE RETENTION
+  # ================================================================================================
+  
+  influxdb:
+    image: influxdb:2.7-alpine
+    container_name: op-influxdb
+    hostname: influxdb
+    <<: *restart-policy
+    logging: *default-logging
+    
+    # Resource limits to prevent memory exhaustion
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 2G
+        reservations:
+          cpus: '0.5'
+          memory: 512M
+    
+    # Environment configuration for initial setup
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: admin
+      DOCKER_INFLUXDB_INIT_PASSWORD: adminpass123
+      DOCKER_INFLUXDB_INIT_ORG: op-trading
+      DOCKER_INFLUXDB_INIT_BUCKET: options-data
+      DOCKER_INFLUXDB_INIT_RETENTION: 0s  # INFINITE RETENTION - CRITICAL FOR COMPLIANCE
+      DOCKER_INFLUXDB_INIT_ADMIN_TOKEN: VFEhioeCi2vFCtv-dH_7Fe6gEgNtO-Tu7qcQW4WvIbAFQIdKGa_hDu4dxatOgwskZcva4CHkeOPbjkQwAvPyVg==
+      
+      # Performance optimization settings
+      INFLUXD_ENGINE_MAX_MEMORY_SIZE: 1073741824  # 1GB
+      INFLUXD_ENGINE_CACHE_MAX_MEMORY_SIZE: 268435456  # 256MB
+      INFLUXD_ENGINE_CACHE_SNAPSHOT_MEMORY_SIZE: 26214400  # 25MB
+      
+      # Storage engine configuration
+      INFLUXD_STORAGE_ENGINE: tsm1
+      INFLUXD_STORAGE_TSM1_MAX_CONCURRENT_COMPACTIONS: 2
+      INFLUXD_STORAGE_VALIDATE_KEYS: true
+    
+    # Port mapping
+    ports:
+      - "8086:8086"
+    
+    # Volume mounting for persistent data storage
+    volumes:
+      - influxdb2-data:/var/lib/influxdb2
+      - influxdb2-config:/etc/influxdb2
+      
+      # Optional: Custom configuration file
+      # - ./config/influxdb/influxdb.conf:/etc/influxdb2/influxdb.conf:ro
+    
+    # Network configuration
+    networks:
+      - op-trading-network
+      - op-trading-external
+    
+    # Health check configuration
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "influx", "ping"]
+    
+    # Container labels
+    labels:
+      <<: *common-labels
+      com.op-trading.service.name: "influxdb"
+      com.op-trading.service.type: "database"
+      com.op-trading.service.critical: "true"
+      com.op-trading.service.description: "Time-series database with infinite retention"
+
+  # ================================================================================================
+  # REDIS - HIGH-PERFORMANCE CACHE AND COORDINATION
+  # ================================================================================================
+  
+  redis:
+    image: redis:7-alpine
+    container_name: op-redis
+    hostname: redis
+    <<: *restart-policy
+    logging: *default-logging
+    
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.2'
+          memory: 128M
+    
+    # Redis server configuration
+    command: >
+      redis-server
+      --save 60 1
+      --loglevel warning
+      --maxmemory 512mb
+      --maxmemory-policy allkeys-lru
+      --tcp-keepalive 300
+      --timeout 0
+      --tcp-backlog 511
+      --databases 16
+      --stop-writes-on-bgsave-error no
+      --rdbcompression yes
+      --rdbchecksum yes
+      --appendonly yes
+      --appendfsync everysec
+      --no-appendfsync-on-rewrite no
+      --auto-aof-rewrite-percentage 100
+      --auto-aof-rewrite-min-size 64mb
+    
+    # Port mapping
+    ports:
+      - "6379:6379"
+    
+    # Volume mounting for data persistence
+    volumes:
+      - redis-data:/data
+      
+      # Optional: Custom Redis configuration
+      # - ./config/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+    
+    # Network configuration
+    networks:
+      - op-trading-network
+    
+    # Health check
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "redis-cli", "ping"]
+    
+    # Container labels
+    labels:
+      <<: *common-labels
+      com.op-trading.service.name: "redis"
+      com.op-trading.service.type: "cache"
+      com.op-trading.service.critical: "true"
+      com.op-trading.service.description: "High-performance caching and coordination"
+
+  # ================================================================================================
+  # PROMETHEUS - METRICS COLLECTION AND MONITORING
+  # ================================================================================================
+  
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: op-prometheus
+    hostname: prometheus
+    <<: *restart-policy
+    logging: *default-logging
+    
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+    
+    # Prometheus server configuration
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=90d'  # Retain metrics for 90 days
+      - '--storage.tsdb.retention.size=10GB'  # Maximum storage size
+      - '--web.enable-lifecycle'
+      - '--web.enable-admin-api'
+      - '--web.external-url=http://localhost:9090'
+    
+    # Port mapping
+    ports:
+      - "9090:9090"
+    
+    # Volume mounting
+    volumes:
+      - prometheus-data:/prometheus
+      - ./config/prometheus:/etc/prometheus:ro
+      
+      # Default configuration if custom config doesn't exist
+      - type: tmpfs
+        target: /tmp
+        tmpfs:
+          size: 100M
+    
+    # Network configuration
+    networks:
+      - op-trading-network
+      - op-trading-external
+    
+    # Health check
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:9090/-/healthy"]
+    
+    # Container labels
+    labels:
+      <<: *common-labels
+      com.op-trading.service.name: "prometheus"
+      com.op-trading.service.type: "monitoring"
+      com.op-trading.service.critical: "false"
+      com.op-trading.service.description: "Metrics collection and monitoring"
+
+  # ================================================================================================
+  # GRAFANA - VISUALIZATION AND DASHBOARDS
+  # ================================================================================================
+  
+  grafana:
+    image: grafana/grafana:latest
+    container_name: op-grafana
+    hostname: grafana
+    <<: *restart-policy
+    logging: *default-logging
+    
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '1.0'
+          memory: 1G
+        reservations:
+          cpus: '0.1'
+          memory: 128M
+    
+    # Environment configuration
+    environment:
+      # Security configuration
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: admin123
+      GF_SECURITY_SECRET_KEY: op-trading-grafana-secret-key
+      
+      # Server configuration
+      GF_SERVER_PROTOCOL: http
+      GF_SERVER_HTTP_PORT: 3000
+      GF_SERVER_DOMAIN: localhost
+      GF_SERVER_ROOT_URL: http://localhost:3000/
+      
+      # Database configuration (using SQLite for simplicity)
+      GF_DATABASE_TYPE: sqlite3
+      GF_DATABASE_PATH: /var/lib/grafana/grafana.db
+      
+      # Analytics and reporting
+      GF_ANALYTICS_REPORTING_ENABLED: false
+      GF_ANALYTICS_CHECK_FOR_UPDATES: false
+      
+      # Logging configuration
+      GF_LOG_LEVEL: info
+      GF_LOG_MODE: console
+      
+      # Plugin management
+      GF_INSTALL_PLUGINS: "grafana-clock-panel,grafana-simple-json-datasource,grafana-worldmap-panel"
+      
+      # Feature toggles
+      GF_FEATURE_TOGGLES_ENABLE: "ngalert"
+      
+      # Authentication
+      GF_AUTH_ANONYMOUS_ENABLED: false
+      GF_AUTH_BASIC_ENABLED: true
+      
+      # Session management
+      GF_SESSION_PROVIDER: memory
+      GF_SESSION_COOKIE_SECURE: false
+      GF_SESSION_SESSION_LIFE_TIME: 86400
+    
+    # Port mapping
+    ports:
+      - "3000:3000"
+    
+    # Volume mounting
+    volumes:
+      - grafana-data:/var/lib/grafana
+      
+      # Optional: Pre-configured dashboards and data sources
+      # - ./config/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      # - ./config/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+      
+      # Custom Grafana configuration
+      # - ./config/grafana/grafana.ini:/etc/grafana/grafana.ini:ro
+    
+    # Network configuration
+    networks:
+      - op-trading-network
+      - op-trading-external
+    
+    # Service dependencies
+    depends_on:
+      - prometheus
+      - influxdb
+    
+    # Health check
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+    
+    # Container labels
+    labels:
+      <<: *common-labels
+      com.op-trading.service.name: "grafana"
+      com.op-trading.service.type: "visualization"
+      com.op-trading.service.critical: "false"
+      com.op-trading.service.description: "Dashboards and visualization platform"
+
+  # ================================================================================================
+  # NGINX - REVERSE PROXY AND LOAD BALANCER (PRODUCTION MODE)
+  # ================================================================================================
+  
+  nginx:
+    image: nginx:alpine
+    container_name: op-nginx
+    hostname: nginx
+    <<: *restart-policy
+    logging: *default-logging
+    
+    # Only start in production mode
+    profiles:
+      - production
+    
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '0.5'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    
+    # Port mapping
+    ports:
+      - "80:80"
+      - "443:443"
+    
+    # Volume mounting
+    volumes:
+      - nginx-config:/etc/nginx/conf.d
+      
+      # Nginx configuration
+      - type: bind
+        source: ./config/nginx/nginx.conf
+        target: /etc/nginx/nginx.conf
+        read_only: true
+        
+      # SSL certificates (if available)
+      # - ./ssl:/etc/nginx/ssl:ro
+      
+      # Static assets
+      # - ./static:/usr/share/nginx/html:ro
+    
+    # Network configuration
+    networks:
+      - op-trading-external
+    
+    # Service dependencies
+    depends_on:
+      - grafana
+    
+    # Health check
+    healthcheck:
+      <<: *healthcheck-defaults
+      test: ["CMD", "nginx", "-t"]
+    
+    # Container labels
+    labels:
+      <<: *common-labels
+      com.op-trading.service.name: "nginx"
+      com.op-trading.service.type: "proxy"
+      com.op-trading.service.critical: "false"
+      com.op-trading.service.description: "Reverse proxy and load balancer"
+
+  # ================================================================================================
+  # ADDITIONAL SERVICES (OPTIONAL)
+  # ================================================================================================
+  
+  # Node Exporter for system metrics (optional)
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: op-node-exporter
+    hostname: node-exporter
+    <<: *restart-policy
+    logging: *default-logging
+    
+    # Only start when explicitly enabled
+    profiles:
+      - monitoring
+      - production
+    
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '0.2'
+          memory: 128M
+        reservations:
+          cpus: '0.05'
+          memory: 32M
+    
+    # Node Exporter configuration
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.rootfs=/rootfs'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    
+    # Port mapping
+    ports:
+      - "9100:9100"
+    
+    # Volume mounting for system metrics
+    volumes:
+      - '/proc:/host/proc:ro'
+      - '/sys:/host/sys:ro'
+      - '/:/rootfs:ro'
+    
+    # Network configuration
+    networks:
+      - op-trading-network
+    
+    # Container labels
+    labels:
+      <<: *common-labels
+      com.op-trading.service.name: "node-exporter"
+      com.op-trading.service.type: "monitoring"
+      com.op-trading.service.critical: "false"
+      com.op-trading.service.description: "System metrics exporter"
+
+  # cAdvisor for container metrics (optional)
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:latest
+    container_name: op-cadvisor
+    hostname: cadvisor
+    <<: *restart-policy
+    logging: *default-logging
+    
+    # Only start when explicitly enabled
+    profiles:
+      - monitoring
+      - production
+    
+    # Resource limits
+    deploy:
+      resources:
+        limits:
+          cpus: '0.3'
+          memory: 256M
+        reservations:
+          cpus: '0.1'
+          memory: 64M
+    
+    # Port mapping
+    ports:
+      - "8080:8080"
+    
+    # Volume mounting for container metrics
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    
+    # Privileged mode for container access
+    privileged: true
+    
+    # Network configuration
+    networks:
+      - op-trading-network
+    
+    # Container labels
+    labels:
+      <<: *common-labels
+      com.op-trading.service.name: "cadvisor"
+      com.op-trading.service.type: "monitoring"
+      com.op-trading.service.critical: "false"
+      com.op-trading.service.description: "Container metrics exporter"
+
+# ================================================================================================
+# SERVICE CONFIGURATION NOTES AND DEPLOYMENT INSTRUCTIONS
+# ================================================================================================
+
+# DEPLOYMENT INSTRUCTIONS:
+# ========================
+# 
+# 1. FIRST TIME SETUP:
+#    docker-compose up -d influxdb redis
+#    # Wait for services to initialize, then:
+#    docker-compose up -d prometheus grafana
+# 
+# 2. DEVELOPMENT MODE:
+#    docker-compose up -d influxdb redis prometheus grafana
+# 
+# 3. PRODUCTION MODE:
+#    docker-compose --profile production up -d
+#    # This starts all services including Nginx
+# 
+# 4. MONITORING MODE (with system metrics):
+#    docker-compose --profile monitoring up -d
+# 
+# 5. FULL PRODUCTION WITH MONITORING:
+#    docker-compose --profile production --profile monitoring up -d
+#
+# MAINTENANCE COMMANDS:
+# ====================
+# 
+# View logs:
+#   docker-compose logs -f [service_name]
+# 
+# Restart service:
+#   docker-compose restart [service_name]
+# 
+# Update services:
+#   docker-compose pull && docker-compose up -d
+# 
+# Backup volumes:
+#   docker run --rm -v op-trading_influxdb2-data:/data -v $(pwd):/backup alpine tar czf /backup/influxdb-backup.tar.gz -C /data .
+# 
+# Scale services (production):
+#   docker-compose up -d --scale prometheus=2
+#
+# SECURITY NOTES:
+# ===============
+# 
+# 1. Change default passwords in production:
+#    - InfluxDB: DOCKER_INFLUXDB_INIT_PASSWORD
+#    - Grafana: GF_SECURITY_ADMIN_PASSWORD
+# 
+# 2. Generate secure tokens:
+#    - InfluxDB: DOCKER_INFLUXDB_INIT_ADMIN_TOKEN
+#    - Grafana: GF_SECURITY_SECRET_KEY
+# 
+# 3. Enable TLS in production:
+#    - Configure SSL certificates in Nginx
+#    - Enable HTTPS in Grafana configuration
+# 
+# 4. Network security:
+#    - Use internal networks for service communication
+#    - Expose only necessary ports to external network
+# 
+# 5. Volume security:
+#    - Ensure proper file system permissions
+#    - Implement backup encryption for sensitive data
+# 
+# PERFORMANCE TUNING:
+# ===================
+# 
+# 1. Adjust resource limits based on system capacity
+# 2. Tune InfluxDB memory settings for your data volume
+# 3. Configure Redis memory policy for your use case
+# 4. Optimize Prometheus retention settings
+# 5. Monitor container metrics with cAdvisor
+#
+# TROUBLESHOOTING:
+# ================
+# 
+# Service won't start:
+#   docker-compose logs [service_name]
+# 
+# Permission issues:
+#   sudo chown -R 472:472 grafana-data/  # Grafana UID
+#   sudo chown -R 999:999 redis-data/    # Redis UID
+# 
+# Network connectivity:
+#   docker network ls
+#   docker network inspect op-trading_op-trading-network
+# 
+# Volume issues:
+#   docker volume ls
+#   docker volume inspect op-trading_influxdb2-data
